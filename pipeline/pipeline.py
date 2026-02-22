@@ -34,7 +34,7 @@ class PipelineConfig:
     """Hard cap on the number of extracted frames."""
 
     # ----- Frame filtering -----
-    blur_threshold: float = 80.0
+    blur_threshold: float = 15.0
     """Laplacian-variance threshold below which a frame is marked blurry."""
 
     similarity_threshold: float = 8.0

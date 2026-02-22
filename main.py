@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--blur-threshold",
         type=float,
-        default=80.0,
+        default=15.0,
         help="Laplacian variance threshold for blur detection.",
     )
     p.add_argument(

@@ -24,8 +24,9 @@ class FrameFilter:
 
     Args:
         blur_threshold: Frames whose Laplacian variance is below this value
-            are considered blurry and discarded.  Typical indoor product
-            videos work well with values in the range 50–150.
+            are considered blurry and discarded.  Compressed product videos
+            (1080p JPEG frames) typically score in the range 15–80; the
+            default of 15.0 filters only genuinely blurry frames.
         similarity_threshold: Frames whose mean absolute difference of their
             perceptual hash thumbnail vs the previous kept frame is below this
             value are considered duplicates and discarded (0–255 scale,
@@ -38,7 +39,7 @@ class FrameFilter:
 
     def __init__(
         self,
-        blur_threshold: float = 80.0,
+        blur_threshold: float = 15.0,
         similarity_threshold: float = 8.0,
         min_frames: int = 10,
     ) -> None:
