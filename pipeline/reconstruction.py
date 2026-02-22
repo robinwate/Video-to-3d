@@ -3,9 +3,7 @@
 import logging
 import os
 import shutil
-import tempfile
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -18,9 +16,10 @@ class Reconstructor:
     This class wraps ``pycolmap`` to perform:
 
     1. SIFT feature extraction on each input image.
-    2. Exhaustive (or sequential) feature matching.
+    2. Sequential feature matching.
     3. Incremental SfM to recover camera poses and a sparse 3-D point cloud.
-    4. Patch-Match Stereo (PatchMatchStereo) for dense depth estimation.
+    4. Patch-Match Stereo for dense depth estimation (requires CUDA; falls
+       back to the sparse point cloud when CUDA is unavailable).
     5. Stereo fusion to produce a dense, colored point cloud.
 
     Args:
@@ -78,47 +77,50 @@ class Reconstructor:
         os.makedirs(output_dir, exist_ok=True)
 
         # ------------------------------------------------------------------
-        # 1. Prepare image directory (symlinks to avoid copying large files)
+        # 1. Prepare image directory (copy files; symlinks require elevated
+        #    permissions on Windows so we avoid them here).
         # ------------------------------------------------------------------
         image_dir = os.path.join(output_dir, "images")
         os.makedirs(image_dir, exist_ok=True)
         for src in image_paths:
             dst = os.path.join(image_dir, os.path.basename(src))
             if not os.path.exists(dst):
-                os.symlink(os.path.abspath(src), dst)
+                shutil.copy2(src, dst)
 
         database_path = os.path.join(output_dir, "database.db")
         sparse_dir = os.path.join(output_dir, "sparse")
         os.makedirs(sparse_dir, exist_ok=True)
 
+        # Determine device from use_gpu flag.
+        device = pycolmap.Device.cuda if self.use_gpu else pycolmap.Device.cpu
+
         # ------------------------------------------------------------------
         # 2. Feature extraction
         # ------------------------------------------------------------------
-        logger.info("Running COLMAP feature extraction …")
-        sift_options = pycolmap.SiftExtractionOptions()
-        sift_options.max_image_size = self.max_image_size
-        sift_options.use_gpu = self.use_gpu
+        logger.info("Running COLMAP feature extraction ...")
+        extraction_options = pycolmap.FeatureExtractionOptions()
+        extraction_options.max_image_size = self.max_image_size
 
         pycolmap.extract_features(
             database_path=database_path,
             image_path=image_dir,
-            sift_options=sift_options,
+            extraction_options=extraction_options,
+            device=device,
         )
 
         # ------------------------------------------------------------------
         # 3. Feature matching
         # ------------------------------------------------------------------
-        logger.info("Running COLMAP feature matching …")
-        matching_options = pycolmap.SequentialMatchingOptions()
+        logger.info("Running COLMAP feature matching ...")
         pycolmap.match_sequential(
             database_path=database_path,
-            matching_options=matching_options,
+            device=device,
         )
 
         # ------------------------------------------------------------------
         # 4. Incremental SfM (sparse reconstruction)
         # ------------------------------------------------------------------
-        logger.info("Running incremental SfM …")
+        logger.info("Running incremental SfM ...")
         maps = pycolmap.incremental_mapping(
             database_path=database_path,
             image_path=image_dir,
@@ -140,7 +142,7 @@ class Reconstructor:
         )
 
         # ------------------------------------------------------------------
-        # 5. Dense reconstruction (optional)
+        # 5. Dense reconstruction (optional; requires CUDA)
         # ------------------------------------------------------------------
         if self.dense:
             points, colors = self._dense_reconstruct(
@@ -151,13 +153,12 @@ class Reconstructor:
 
         if len(points) < 100:
             raise RuntimeError(
-                f"Reconstruction produced only {len(points)} points; "
-                "the input video may not provide enough multi-view coverage."
+                "Reconstruction produced only {} points; "
+                "the input video may not provide enough multi-view "
+                "coverage.".format(len(points))
             )
 
-        logger.info(
-            "Reconstruction complete: %d points", len(points)
-        )
+        logger.info("Reconstruction complete: %d points", len(points))
         return points, colors
 
     # ------------------------------------------------------------------
@@ -183,25 +184,31 @@ class Reconstructor:
         output_dir: str,
         pycolmap,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Run PatchMatch stereo and fusion; return dense point cloud."""
+        """Run PatchMatch stereo and fusion; return dense point cloud.
+
+        Falls back to the sparse point cloud if CUDA is unavailable or any
+        other error occurs during dense reconstruction.
+        """
         dense_dir = os.path.join(output_dir, "dense")
         os.makedirs(dense_dir, exist_ok=True)
 
+        sparse_model_dir = os.path.join(output_dir, "sparse")
+
         try:
             # Undistort images for dense MVS.
-            logger.info("Undistorting images for dense reconstruction …")
+            logger.info("Undistorting images for dense reconstruction ...")
             pycolmap.undistort_images(
                 output_path=dense_dir,
-                input_path=os.path.join(output_dir, "sparse"),
+                input_path=sparse_model_dir,
                 image_path=image_dir,
             )
 
-            # PatchMatch stereo.
-            logger.info("Running PatchMatch stereo …")
+            # PatchMatch stereo (requires CUDA).
+            logger.info("Running PatchMatch stereo ...")
             pycolmap.patch_match_stereo(workspace_path=dense_dir)
 
             # Stereo fusion.
-            logger.info("Running stereo fusion …")
+            logger.info("Running stereo fusion ...")
             fused_path = os.path.join(dense_dir, "fused.ply")
             pycolmap.stereo_fusion(
                 output_path=fused_path,
@@ -212,7 +219,9 @@ class Reconstructor:
 
         except Exception as exc:
             logger.warning(
-                "Dense reconstruction failed (%s); falling back to sparse.", exc
+                "Dense reconstruction failed (%s); falling back to sparse "
+                "point cloud.  Use --no-dense to suppress this warning.",
+                exc,
             )
             return self._sparse_points(reconstruction)
 
@@ -231,5 +240,5 @@ class Reconstructor:
             return points, colors
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to load PLY point cloud from {ply_path}: {exc}"
+                "Failed to load PLY point cloud from {}: {}".format(ply_path, exc)
             ) from exc
