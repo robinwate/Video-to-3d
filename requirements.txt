@@ -1,0 +1,9 @@
+opencv-python-headless>=4.8
+numpy>=1.24
+open3d>=0.17
+trimesh[easy]>=4.0
+Pillow>=10.0
+scipy>=1.11
+pygltflib>=1.15
+xatlas>=0.0.8
+pycolmap>=0.6
