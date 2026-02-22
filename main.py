@@ -6,6 +6,16 @@ import logging
 import os
 import sys
 
+# Ensure the pipeline package is importable regardless of working directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Configure stdout to UTF-8 on Windows so Unicode characters don't crash.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -110,8 +120,16 @@ def main(argv=None) -> int:
         logger.error("Input video not found: %s", args.input_video)
         return 1
 
-    from pipeline import Pipeline
-    from pipeline.pipeline import PipelineConfig
+    try:
+        from pipeline import Pipeline
+        from pipeline.pipeline import PipelineConfig
+    except ImportError as exc:
+        logger.error(
+            "Failed to import pipeline package: %s\n"
+            "Ensure all dependencies are installed: pip install -r requirements.txt",
+            exc,
+        )
+        return 1
 
     config = PipelineConfig(
         target_fps=args.fps,
@@ -129,19 +147,26 @@ def main(argv=None) -> int:
 
     try:
         result = pipeline.run(args.input_video, args.output)
-        print(f"\n✓ Done in {result.elapsed_seconds:.1f}s")
-        print(f"  Frames extracted : {result.num_frames_extracted}")
-        print(f"  Frames used      : {result.num_frames_used}")
-        print(f"  Point cloud size : {result.num_points:,}")
-        print(f"  Mesh triangles   : {result.num_triangles:,}")
-        print(f"  Output           : {result.glb_path}")
+        print("\nDone in {:.1f}s".format(result.elapsed_seconds))
+        print("  Frames extracted : {}".format(result.num_frames_extracted))
+        print("  Frames used      : {}".format(result.num_frames_used))
+        print("  Point cloud size : {:,}".format(result.num_points))
+        print("  Mesh triangles   : {:,}".format(result.num_triangles))
+        print("  Output           : {}".format(result.glb_path))
         if result.warnings:
             print("\nWarnings:")
             for w in result.warnings:
-                print(f"  • {w}")
+                print("  - {}".format(w))
         return 0
     except FileNotFoundError as exc:
         logger.error("File not found: %s", exc)
+        return 1
+    except ImportError as exc:
+        logger.error(
+            "Missing dependency: %s\n"
+            "Install all requirements with: pip install -r requirements.txt",
+            exc,
+        )
         return 1
     except RuntimeError as exc:
         logger.error("Pipeline failed: %s", exc)
