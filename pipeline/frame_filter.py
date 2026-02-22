@@ -148,7 +148,7 @@ class FrameFilter:
             return []
 
         kept: List[str] = []
-        prev_thumb: np.ndarray | None = None
+        prev_thumb: Optional[np.ndarray] = None
 
         for path in frame_paths:
             img = cv2.imread(path)
