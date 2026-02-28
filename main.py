@@ -86,14 +86,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Embedded texture image format.",
     )
     p.add_argument(
-        "--no-dense",
-        action="store_true",
-        help="Skip dense MVS reconstruction (faster, lower quality).",
+        "--device",
+        default="cpu",
+        choices=["cpu", "cuda"],
+        help="Compute device for AI models (cpu or cuda).",
     )
     p.add_argument(
-        "--gpu",
-        action="store_true",
-        help="Use GPU acceleration in COLMAP feature extraction.",
+        "--bg-model",
+        default="u2net",
+        help="rembg model for AI background removal (e.g. u2net, u2netp).",
+    )
+    p.add_argument(
+        "--depth-model",
+        default="depth-anything/Depth-Anything-V2-Small-hf",
+        help="HuggingFace model for depth estimation.",
     )
     p.add_argument(
         "--work-dir",
@@ -139,8 +145,9 @@ def main(argv=None) -> int:
         max_triangles=args.max_triangles,
         texture_size=args.texture_size,
         texture_format=args.texture_format,
-        dense_reconstruction=not args.no_dense,
-        use_gpu=args.gpu,
+        device=args.device,
+        bg_removal_model=args.bg_model,
+        depth_model=args.depth_model,
     )
 
     pipeline = Pipeline(config=config, work_dir=args.work_dir)

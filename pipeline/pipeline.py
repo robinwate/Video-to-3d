@@ -8,11 +8,13 @@ from typing import List, Optional
 
 import numpy as np
 
+from .background_remover import BackgroundRemover
+from .depth_estimator import DepthEstimator
 from .frame_extractor import FrameExtractor
 from .frame_filter import FrameFilter
 from .glb_exporter import GLBExporter
 from .mesh_processor import MeshProcessor
-from .reconstruction import Reconstructor
+from .point_cloud_builder import PointCloudBuilder
 from .texture_baker import TextureBaker
 
 logger = logging.getLogger(__name__)
@@ -40,15 +42,20 @@ class PipelineConfig:
     similarity_threshold: float = 8.0
     """Mean-pixel-difference threshold for duplicate detection."""
 
-    # ----- Reconstruction -----
-    use_gpu: bool = False
-    """Whether to request GPU in COLMAP feature extraction / matching."""
+    # ----- AI background removal -----
+    bg_removal_model: str = "u2net"
+    """rembg model used for AI background removal."""
 
-    dense_reconstruction: bool = True
-    """Run PatchMatch dense MVS after SfM (slower, more detail)."""
+    # ----- AI depth estimation -----
+    depth_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
+    """HuggingFace model identifier for per-frame depth estimation."""
 
-    max_image_size: int = 2000
-    """Downscale input images whose longest side exceeds this value."""
+    device: str = "cpu"
+    """Compute device for AI models: ``"cpu"`` or ``"cuda"``."""
+
+    # ----- Point cloud -----
+    min_depth_confidence: float = 0.1
+    """Minimum normalised depth value to include a pixel in the point cloud."""
 
     # ----- Mesh processing -----
     poisson_depth: int = 9
@@ -154,23 +161,38 @@ class Pipeline:
         logger.info("Using %d frames after filtering.", result.num_frames_used)
 
         # ----------------------------------------------------------------
-        # Stage 3 – 3D reconstruction
+        # Stage 3 – AI background removal
         # ----------------------------------------------------------------
-        logger.info("=== Stage 3: 3D reconstruction ===")
-        recon = Reconstructor(
-            use_gpu=self.config.use_gpu,
-            max_image_size=self.config.max_image_size,
-            dense=self.config.dense_reconstruction,
-        )
-        recon_dir = os.path.join(run_dir, "reconstruction")
-        points, colors = recon.reconstruct(filtered_frames, recon_dir)
-        result.num_points = len(points)
-        logger.info("Reconstruction produced %d points.", result.num_points)
+        logger.info("=== Stage 3: AI background removal ===")
+        bg_remover = BackgroundRemover(model_name=self.config.bg_removal_model)
+        bg_dir = os.path.join(run_dir, "frames_bg_removed")
+        rgba_frames = bg_remover.remove(filtered_frames, bg_dir)
+        logger.info("Background removed for %d frames.", len(rgba_frames))
 
         # ----------------------------------------------------------------
-        # Stage 4 – Mesh processing
+        # Stage 4 – AI depth estimation
         # ----------------------------------------------------------------
-        logger.info("=== Stage 4: Mesh processing ===")
+        logger.info("=== Stage 4: AI depth estimation ===")
+        depth_estimator = DepthEstimator(
+            model_name=self.config.depth_model,
+            device=self.config.device,
+        )
+        depth_maps = depth_estimator.estimate(rgba_frames)
+        logger.info("Depth maps estimated for %d frames.", len(depth_maps))
+
+        # ----------------------------------------------------------------
+        # Stage 5 – Neural point cloud fusion
+        # ----------------------------------------------------------------
+        logger.info("=== Stage 5: Depth-based point cloud fusion ===")
+        pc_builder = PointCloudBuilder(min_confidence=self.config.min_depth_confidence)
+        points, colors = pc_builder.build(rgba_frames, depth_maps)
+        result.num_points = len(points)
+        logger.info("Point cloud: %d points.", result.num_points)
+
+        # ----------------------------------------------------------------
+        # Stage 6 – Mesh processing
+        # ----------------------------------------------------------------
+        logger.info("=== Stage 6: Mesh processing ===")
         processor = MeshProcessor(
             poisson_depth=self.config.poisson_depth,
             max_triangles=self.config.max_triangles,
@@ -181,16 +203,16 @@ class Pipeline:
         logger.info("Mesh: %d triangles.", result.num_triangles)
 
         # ----------------------------------------------------------------
-        # Stage 5 – Texture baking
+        # Stage 7 – Texture baking
         # ----------------------------------------------------------------
-        logger.info("=== Stage 5: Texture baking ===")
+        logger.info("=== Stage 7: Texture baking ===")
         baker = TextureBaker(texture_size=self.config.texture_size)
         uv_mesh, texture = baker.bake(mesh)
 
         # ----------------------------------------------------------------
-        # Stage 6 – GLB export
+        # Stage 8 – GLB export
         # ----------------------------------------------------------------
-        logger.info("=== Stage 6: GLB export ===")
+        logger.info("=== Stage 8: GLB export ===")
         exporter = GLBExporter(
             texture_format=self.config.texture_format,
             jpeg_quality=self.config.jpeg_quality,

@@ -210,6 +210,22 @@ class MeshProcessor:
         if len(vertices) == 0:
             return mesh
 
+        # Guard: Poisson reconstruction can produce NaN/Inf vertices for
+        # degenerate inputs.  A single NaN propagates through mean() to ALL
+        # vertices (finite - NaN = NaN), collapsing the whole mesh to origin
+        # after the GLB exporter clamps NaN to 0.  Remove those vertices first
+        # so the rest of the mesh is normalised correctly.
+        non_finite_mask = ~np.isfinite(vertices).all(axis=1)
+        if non_finite_mask.any():
+            logger.warning(
+                "%d non-finite vertices removed before normalisation.",
+                int(non_finite_mask.sum()),
+            )
+            mesh.remove_vertices_by_mask(non_finite_mask.tolist())
+            vertices = np.asarray(mesh.vertices)
+            if len(vertices) == 0:
+                return mesh
+
         center = vertices.mean(axis=0)
         vertices -= center
 
