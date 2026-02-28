@@ -83,3 +83,28 @@ class TestMeshProcessor:
         verts = np.asarray(mesh.vertices)
         # After normalisation the base should be at y≈0.
         assert verts[:, 1].min() >= -0.05
+
+    def test_normalize_survives_nan_vertex(self):
+        """_normalize must not propagate NaN from a single bad vertex to all others."""
+        import open3d as o3d
+
+        from pipeline.mesh_processor import MeshProcessor
+
+        # Build a minimal valid mesh then inject NaN into one vertex.
+        mesh = o3d.geometry.TriangleMesh()
+        verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float64)
+        tris = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int32)
+        mesh.vertices = o3d.utility.Vector3dVector(verts)
+        mesh.triangles = o3d.utility.Vector3iVector(tris)
+
+        verts_nan = verts.copy()
+        verts_nan[0] = [float("nan"), float("nan"), float("nan")]
+        mesh.vertices = o3d.utility.Vector3dVector(verts_nan)
+
+        result = MeshProcessor._normalize(mesh)
+        result_verts = np.asarray(result.vertices)
+
+        assert len(result_verts) > 0, "_normalize removed all vertices"
+        assert np.isfinite(result_verts).all(), (
+            "NaN from one bad vertex propagated to all others"
+        )
