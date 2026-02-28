@@ -84,6 +84,31 @@ class GLBExporter:
         norm_arr = normals[triangles.flatten()].astype(np.float32)
         uv_arr = triangle_uvs  # (N*3, 2) – already per-corner
 
+        # Sanitize all float arrays: NaN/Inf in positions propagates to the
+        # accessor min/max fields in the glTF JSON, producing invalid JSON
+        # (e.g. "NaN") that strict parsers in viewers reject.  NaN/Inf in
+        # binary attribute data similarly corrupts the GPU upload.
+        if not np.isfinite(pos_arr).all():
+            logger.warning(
+                "Mesh positions contain non-finite values (NaN/Inf); "
+                "clamping to 0. This may indicate upstream point-cloud or "
+                "mesh-processing quality issues."
+            )
+            pos_arr = np.nan_to_num(pos_arr, nan=0.0, posinf=0.0, neginf=0.0)
+        if not np.isfinite(norm_arr).all():
+            logger.warning(
+                "Mesh normals contain non-finite values; clamping to 0."
+            )
+            norm_arr = np.nan_to_num(norm_arr, nan=0.0, posinf=0.0, neginf=0.0)
+        if not np.isfinite(uv_arr).all() or uv_arr.min() < 0.0 or uv_arr.max() > 1.0:
+            logger.warning(
+                "UV coordinates contain non-finite or out-of-range values; "
+                "clamping to [0, 1]."
+            )
+            uv_arr = np.clip(
+                np.nan_to_num(uv_arr, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0
+            )
+
         # Index buffer: simple sequential indices.
         index_arr = np.arange(n_corners, dtype=np.uint32)
 

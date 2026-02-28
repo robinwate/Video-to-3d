@@ -143,3 +143,45 @@ class TestGLBExporter:
 
         with pytest.raises(ValueError, match="texture_format"):
             GLBExporter(texture_format="bmp")
+
+    def test_nan_uvs_produce_valid_json(self, tmp_path):
+        """GLB with NaN UV values must still produce valid, parseable JSON."""
+        import json
+        import open3d as o3d
+
+        from pipeline.glb_exporter import GLBExporter
+
+        mesh = _make_minimal_mesh()
+        # Inject NaN into the triangle UVs to simulate degenerate xatlas output.
+        uvs_with_nan = np.array(
+            [
+                [float("nan"), 0.0],
+                [1.0, float("nan")],
+                [0.0, 1.0],
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        mesh.triangle_uvs = o3d.utility.Vector2dVector(uvs_with_nan)
+        texture = _make_texture()
+        out = str(tmp_path / "nan_uv.glb")
+
+        GLBExporter().export(mesh, texture, out)
+
+        with open(out, "rb") as fh:
+            raw = fh.read()
+
+        # GLB layout: 12-byte file header + 8-byte JSON chunk header = data at byte 20.
+        # File header:  magic(4) + version(4) + total_length(4)
+        # Chunk header: chunk_length(4) + chunk_type(4)
+        _GLB_JSON_DATA_OFFSET = 20
+        json_chunk_len = struct.unpack_from("<I", raw, 12)[0]
+        json_text = raw[_GLB_JSON_DATA_OFFSET: _GLB_JSON_DATA_OFFSET + json_chunk_len].rstrip(b" ").decode("utf-8")
+
+        # Must not contain the bare "NaN" token (invalid JSON).
+        assert "NaN" not in json_text, "GLB JSON chunk contains NaN"
+        # Must parse successfully with the strict Python json parser.
+        parsed = json.loads(json_text)
+        assert "accessors" in parsed

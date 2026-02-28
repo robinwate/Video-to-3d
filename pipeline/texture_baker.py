@@ -147,7 +147,11 @@ class TextureBaker:
             import xatlas
 
             vmapping, indices, uvs = xatlas.parametrize(vertices, triangles)
-            return uvs.astype(np.float32), indices.astype(np.uint32)
+            uvs = np.nan_to_num(
+                uvs.astype(np.float32), nan=0.0, posinf=1.0, neginf=0.0
+            )
+            uvs = np.clip(uvs, 0.0, 1.0)
+            return uvs, indices.astype(np.uint32)
         except Exception as exc:
             logger.warning(
                 "xatlas UV unwrapping failed (%s); using planar projection.", exc
