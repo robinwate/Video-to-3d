@@ -24,6 +24,15 @@ class TestPipelineConfig:
         assert cfg.target_fps == 5.0
         assert cfg.max_triangles == 10_000
 
+    def test_new_ai_config_fields(self):
+        from pipeline.pipeline import PipelineConfig
+
+        cfg = PipelineConfig()
+        assert cfg.bg_removal_model == "u2net"
+        assert cfg.depth_model == "depth-anything/Depth-Anything-V2-Small-hf"
+        assert cfg.device == "cpu"
+        assert cfg.min_depth_confidence == 0.1
+
 
 class TestPipeline:
     def test_init_default_config(self):
@@ -50,14 +59,18 @@ class TestPipeline:
     @patch("pipeline.pipeline.GLBExporter")
     @patch("pipeline.pipeline.TextureBaker")
     @patch("pipeline.pipeline.MeshProcessor")
-    @patch("pipeline.pipeline.Reconstructor")
+    @patch("pipeline.pipeline.PointCloudBuilder")
+    @patch("pipeline.pipeline.DepthEstimator")
+    @patch("pipeline.pipeline.BackgroundRemover")
     @patch("pipeline.pipeline.FrameFilter")
     @patch("pipeline.pipeline.FrameExtractor")
     def test_run_calls_all_stages(
         self,
         MockExtractor,
         MockFilter,
-        MockReconstructor,
+        MockBgRemover,
+        MockDepthEstimator,
+        MockPointCloudBuilder,
         MockMeshProcessor,
         MockTextureBaker,
         MockGLBExporter,
@@ -77,9 +90,15 @@ class TestPipeline:
         MockExtractor.return_value.extract.return_value = mock_frames
         MockFilter.return_value.filter.return_value = mock_frames
 
+        rgba_frames = [str(tmp_path / f"rgba_{i}.png") for i in range(5)]
+        MockBgRemover.return_value.remove.return_value = rgba_frames
+
+        depth_maps = [np.random.rand(16, 16).astype(np.float32) for _ in range(5)]
+        MockDepthEstimator.return_value.estimate.return_value = depth_maps
+
         points = np.random.rand(200, 3).astype(np.float32)
         colors = np.random.randint(0, 255, (200, 3), dtype=np.uint8)
-        MockReconstructor.return_value.reconstruct.return_value = (points, colors)
+        MockPointCloudBuilder.return_value.build.return_value = (points, colors)
 
         fake_mesh = o3d.geometry.TriangleMesh()
         # Give it some triangles so the count is > 0.
@@ -93,15 +112,18 @@ class TestPipeline:
         MockTextureBaker.return_value.bake.return_value = (fake_mesh, texture)
         MockGLBExporter.return_value.export.return_value = str(tmp_path / "out.glb")
 
-        config = PipelineConfig(dense_reconstruction=False)
+        config = PipelineConfig()
         pipeline = Pipeline(config=config, work_dir=str(tmp_path))
         result = pipeline.run(video, str(tmp_path / "out.glb"))
 
         MockExtractor.return_value.extract.assert_called_once()
         MockFilter.return_value.filter.assert_called_once()
-        MockReconstructor.return_value.reconstruct.assert_called_once()
+        MockBgRemover.return_value.remove.assert_called_once()
+        MockDepthEstimator.return_value.estimate.assert_called_once()
+        MockPointCloudBuilder.return_value.build.assert_called_once()
         MockMeshProcessor.return_value.process.assert_called_once()
         MockTextureBaker.return_value.bake.assert_called_once()
         MockGLBExporter.return_value.export.assert_called_once()
         assert result.num_frames_extracted == 5
         assert result.num_points == 200
+

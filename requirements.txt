@@ -6,4 +6,6 @@ Pillow>=10.0
 scipy>=1.11
 pygltflib>=1.15
 xatlas>=0.0.8
-pycolmap>=0.6
+rembg>=2.0.50
+torch>=2.0
+transformers>=4.38
