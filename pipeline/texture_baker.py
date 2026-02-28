@@ -191,7 +191,7 @@ class TextureBaker:
         for tri_idx, (uv_tri, vert_tri) in enumerate(
             zip(uv_indices, triangles)
         ):
-            uv_pts = uvs[uv_tri]  # (3, 2)
+            uv_pts = np.clip(uvs[uv_tri], 0.0, 1.0)  # (3, 2) – guard against NaN
             v_pts = vertices[vert_tri]  # (3, 3) world coords
 
             # Pixel coords for this UV triangle.
@@ -300,7 +300,7 @@ class TextureBaker:
         has_colors = len(vertex_colors) == len(vertices)
 
         for uv_tri, vert_tri in zip(uv_indices, triangles):
-            uv_pts = uvs[uv_tri]  # (3, 2)
+            uv_pts = np.clip(uvs[uv_tri], 0.0, 1.0)  # (3, 2) – guard against NaN
             px = (uv_pts[:, 0] * (size - 1)).astype(np.int32)
             py = ((1 - uv_pts[:, 1]) * (size - 1)).astype(np.int32)
             tri_px = np.stack([px, py], axis=1)

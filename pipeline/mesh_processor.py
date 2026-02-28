@@ -39,7 +39,7 @@ class MeshProcessor:
         self,
         poisson_depth: int = 9,
         max_triangles: int = 50_000,
-        min_component_ratio: float = 0.01,
+        min_component_ratio: float = 0.05,
         smoothing_iterations: int = 5,
     ) -> None:
         self.poisson_depth = poisson_depth
@@ -93,7 +93,15 @@ class MeshProcessor:
             pcd.colors = o3d.utility.Vector3dVector(rgb_f)
 
         # ----------------------------------------------------------------
-        # 2. Estimate and orient normals
+        # 2. Statistical outlier removal (clean up background noise)
+        # ----------------------------------------------------------------
+        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        logger.info(
+            "Point cloud after outlier removal: %d points", len(pcd.points)
+        )
+
+        # ----------------------------------------------------------------
+        # 3. Estimate and orient normals
         # ----------------------------------------------------------------
         logger.info("Estimating normals …")
         pcd.estimate_normals(
@@ -104,7 +112,7 @@ class MeshProcessor:
         pcd.orient_normals_consistent_tangent_plane(100)
 
         # ----------------------------------------------------------------
-        # 3. Poisson reconstruction
+        # 4. Poisson reconstruction
         # ----------------------------------------------------------------
         logger.info("Running Poisson reconstruction (depth=%d) …", self.poisson_depth)
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
@@ -112,11 +120,11 @@ class MeshProcessor:
         )
 
         # ----------------------------------------------------------------
-        # 4. Remove low-density vertices (Poisson artefacts) BEFORE crop
+        # 5. Remove low-density vertices (Poisson artefacts) BEFORE crop
         # ----------------------------------------------------------------
         densities_np = np.asarray(densities)
         if len(densities_np) > 0 and len(densities_np) == len(np.asarray(mesh.vertices)):
-            density_threshold = np.percentile(densities_np, 5)
+            density_threshold = np.percentile(densities_np, 15)
             vertices_to_remove = (densities_np < density_threshold).tolist()
             mesh.remove_vertices_by_mask(vertices_to_remove)
             logger.info(
@@ -125,21 +133,21 @@ class MeshProcessor:
             )
 
         # ----------------------------------------------------------------
-        # 5. Crop to input bounding box to remove exterior artefacts
+        # 6. Crop to input bounding box to remove exterior artefacts
         # ----------------------------------------------------------------
         logger.info("Cropping mesh to input bounding box …")
         bbox = pcd.get_axis_aligned_bounding_box()
-        # Expand slightly so we don't clip valid surface near the boundary.
-        bbox = bbox.scale(1.05, bbox.get_center())
+        # Crop exactly to the cleaned point cloud bounds so that Poisson
+        # surface caps (low-density fill beyond the real surface) are removed.
         mesh = mesh.crop(bbox)
 
         # ----------------------------------------------------------------
-        # 6. Remove small disconnected components
+        # 7. Remove small disconnected components
         # ----------------------------------------------------------------
         mesh = self._remove_small_components(mesh)
 
         # ----------------------------------------------------------------
-        # 7. Simplification / decimation
+        # 8. Simplification / decimation
         # ----------------------------------------------------------------
         current_tris = len(np.asarray(mesh.triangles))
         if current_tris > self.max_triangles:
@@ -151,7 +159,7 @@ class MeshProcessor:
             mesh = mesh.simplify_quadric_decimation(self.max_triangles)
 
         # ----------------------------------------------------------------
-        # 8. Smooth and recompute normals
+        # 9. Smooth and recompute normals
         # ----------------------------------------------------------------
         if self.smoothing_iterations > 0:
             mesh = mesh.filter_smooth_taubin(
@@ -161,7 +169,7 @@ class MeshProcessor:
         mesh.compute_triangle_normals()
 
         # ----------------------------------------------------------------
-        # 9. Centre and normalise scale
+        # 10. Centre and normalise scale
         # ----------------------------------------------------------------
         mesh = self._normalize(mesh)
 
