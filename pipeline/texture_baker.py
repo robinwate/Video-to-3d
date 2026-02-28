@@ -1,5 +1,6 @@
 """UV-unwrap a mesh and bake textures from the source images."""
 
+import copy
 import logging
 import os
 from typing import List, Optional, Tuple
@@ -359,7 +360,10 @@ class TextureBaker:
         """Return a copy of *mesh* with per-triangle UV coordinates."""
         import open3d as o3d
 
-        mesh_uv = o3d.geometry.TriangleMesh(mesh)
+        # Use deepcopy for a guaranteed full deep copy of all mesh attributes.
+        # o3d.geometry.TriangleMesh(mesh) is not a reliable copy constructor
+        # across all Open3D versions and can produce zero-vertex meshes.
+        mesh_uv = copy.deepcopy(mesh)
         # Store UVs as per-triangle vertex UVs (flattened).
         triangle_uvs = uvs[uv_indices].reshape(-1, 2)
         # Convert to open3d Vector2dVector.

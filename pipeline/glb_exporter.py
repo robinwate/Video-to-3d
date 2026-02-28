@@ -129,6 +129,16 @@ class GLBExporter:
         pos_min = pos_arr.min(axis=0).tolist()
         pos_max = pos_arr.max(axis=0).tolist()
 
+        # Sanity-check: if all positions are at the origin the viewer will
+        # show nothing (zero-size bounding box → bad camera placement / culling).
+        extent = np.array(pos_max) - np.array(pos_min)
+        if np.all(np.abs(extent) < 1e-6):
+            raise RuntimeError(
+                "Degenerate mesh: bounding box extent is near-zero "
+                f"(min={pos_min}, max={pos_max}).  The mesh processor may have "
+                "produced a zero-extent mesh.  Check earlier pipeline stages."
+            )
+
         # ----------------------------------------------------------------
         # MIME type for texture
         # ----------------------------------------------------------------

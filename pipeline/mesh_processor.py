@@ -95,7 +95,7 @@ class MeshProcessor:
         # ----------------------------------------------------------------
         # 2. Statistical outlier removal (clean up background noise)
         # ----------------------------------------------------------------
-        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=3.0)
         logger.info(
             "Point cloud after outlier removal: %d points", len(pcd.points)
         )
@@ -124,7 +124,7 @@ class MeshProcessor:
         # ----------------------------------------------------------------
         densities_np = np.asarray(densities)
         if len(densities_np) > 0 and len(densities_np) == len(np.asarray(mesh.vertices)):
-            density_threshold = np.percentile(densities_np, 15)
+            density_threshold = np.percentile(densities_np, 10)
             vertices_to_remove = (densities_np < density_threshold).tolist()
             mesh.remove_vertices_by_mask(vertices_to_remove)
             logger.info(
@@ -137,8 +137,10 @@ class MeshProcessor:
         # ----------------------------------------------------------------
         logger.info("Cropping mesh to input bounding box …")
         bbox = pcd.get_axis_aligned_bounding_box()
-        # Crop exactly to the cleaned point cloud bounds so that Poisson
-        # surface caps (low-density fill beyond the real surface) are removed.
+        # Expand slightly so surface triangles near the boundary are not clipped.
+        # A 2 % margin prevents the crop from fragmenting the Poisson surface
+        # into many small components that would all be pruned as fragments.
+        bbox = bbox.scale(1.02, bbox.get_center())
         mesh = mesh.crop(bbox)
 
         # ----------------------------------------------------------------
@@ -185,7 +187,11 @@ class MeshProcessor:
     # ------------------------------------------------------------------
 
     def _remove_small_components(self, mesh):
-        """Remove connected components smaller than *min_component_ratio*."""
+        """Remove connected components smaller than *min_component_ratio*.
+
+        The largest component is always kept regardless of ratio, so the
+        function never returns an empty mesh.
+        """
         import open3d as o3d
 
         triangle_clusters, cluster_n_triangles, _ = (
@@ -198,8 +204,15 @@ class MeshProcessor:
         if total == 0:
             return mesh
 
+        # Always keep the largest cluster so we never produce an empty mesh.
+        if len(cluster_n_triangles) == 0:
+            return mesh
+        largest_cluster_id = int(np.argmax(cluster_n_triangles))
         threshold = max(1, int(total * self.min_component_ratio))
-        small_cluster_ids = np.where(cluster_n_triangles < threshold)[0]
+        small_cluster_ids = np.where(
+            (cluster_n_triangles < threshold)
+            & (np.arange(len(cluster_n_triangles)) != largest_cluster_id)
+        )[0]
         mask = np.isin(triangle_clusters, small_cluster_ids)
         mesh.remove_triangles_by_mask(mask)
         mesh.remove_unreferenced_vertices()
@@ -214,7 +227,10 @@ class MeshProcessor:
         """Centre the mesh at the origin and normalise scale to unit cube."""
         import open3d as o3d
 
-        vertices = np.asarray(mesh.vertices)
+        # Use .copy() so we work on a plain numpy array, not a view of Open3D's
+        # internal C++ buffer.  Modifying a view and then re-assigning the
+        # Vector3dVector can be unsafe depending on the Open3D version.
+        vertices = np.asarray(mesh.vertices).copy()
         if len(vertices) == 0:
             return mesh
 
