@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from .background_remover import BackgroundRemover
 from .frame_extractor import FrameExtractor
 from .frame_filter import FrameFilter
 from .glb_exporter import GLBExporter
@@ -24,6 +25,20 @@ class PipelineConfig:
 
     All parameters have sensible defaults that balance quality and performance
     for typical product-video inputs captured on a mid-range mobile device.
+    """
+
+    # ----- Background removal -----
+    remove_background: bool = True
+    """Remove the background from frames before reconstruction.
+
+    When ``True`` a GrabCut-based segmentation is applied to every frame.
+    The object must be centred in the video for best results.
+    """
+
+    fg_scale: float = 0.6
+    """Fraction of the frame used as the initial foreground rectangle for
+    GrabCut.  A value of 0.6 means the centre 60 % of the frame is treated
+    as foreground seed.
     """
 
     # ----- Frame extraction -----
@@ -142,21 +157,32 @@ class Pipeline:
         logger.info("Extracted %d frames.", result.num_frames_extracted)
 
         # ----------------------------------------------------------------
-        # Stage 2 – Frame filtering
+        # Stage 2 – Background removal
         # ----------------------------------------------------------------
-        logger.info("=== Stage 2: Frame filtering ===")
+        logger.info("=== Stage 2: Background removal ===")
+        remover = BackgroundRemover(
+            fg_scale=self.config.fg_scale,
+            enabled=self.config.remove_background,
+        )
+        bg_removed_dir = os.path.join(run_dir, "frames_bg_removed")
+        bg_removed_frames = remover.remove_backgrounds(all_frames, bg_removed_dir)
+
+        # ----------------------------------------------------------------
+        # Stage 3 – Frame filtering
+        # ----------------------------------------------------------------
+        logger.info("=== Stage 3: Frame filtering ===")
         filt = FrameFilter(
             blur_threshold=self.config.blur_threshold,
             similarity_threshold=self.config.similarity_threshold,
         )
-        filtered_frames = filt.filter(all_frames)
+        filtered_frames = filt.filter(bg_removed_frames)
         result.num_frames_used = len(filtered_frames)
         logger.info("Using %d frames after filtering.", result.num_frames_used)
 
         # ----------------------------------------------------------------
-        # Stage 3 – 3D reconstruction
+        # Stage 4 – 3D reconstruction
         # ----------------------------------------------------------------
-        logger.info("=== Stage 3: 3D reconstruction ===")
+        logger.info("=== Stage 4: 3D reconstruction ===")
         recon = Reconstructor(
             use_gpu=self.config.use_gpu,
             max_image_size=self.config.max_image_size,
@@ -168,9 +194,9 @@ class Pipeline:
         logger.info("Reconstruction produced %d points.", result.num_points)
 
         # ----------------------------------------------------------------
-        # Stage 4 – Mesh processing
+        # Stage 5 – Mesh processing
         # ----------------------------------------------------------------
-        logger.info("=== Stage 4: Mesh processing ===")
+        logger.info("=== Stage 5: Mesh processing ===")
         processor = MeshProcessor(
             poisson_depth=self.config.poisson_depth,
             max_triangles=self.config.max_triangles,
@@ -181,16 +207,16 @@ class Pipeline:
         logger.info("Mesh: %d triangles.", result.num_triangles)
 
         # ----------------------------------------------------------------
-        # Stage 5 – Texture baking
+        # Stage 6 – Texture baking
         # ----------------------------------------------------------------
-        logger.info("=== Stage 5: Texture baking ===")
+        logger.info("=== Stage 6: Texture baking ===")
         baker = TextureBaker(texture_size=self.config.texture_size)
         uv_mesh, texture = baker.bake(mesh)
 
         # ----------------------------------------------------------------
-        # Stage 6 – GLB export
+        # Stage 7 – GLB export
         # ----------------------------------------------------------------
-        logger.info("=== Stage 6: GLB export ===")
+        logger.info("=== Stage 7: GLB export ===")
         exporter = GLBExporter(
             texture_format=self.config.texture_format,
             jpeg_quality=self.config.jpeg_quality,

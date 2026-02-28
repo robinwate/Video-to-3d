@@ -134,7 +134,9 @@ class Reconstructor:
             )
 
         # Pick the largest reconstruction.
-        reconstruction = max(maps.values(), key=lambda r: r.num_reg_images())
+        best_key = max(maps, key=lambda k: maps[k].num_reg_images())
+        reconstruction = maps[best_key]
+        sparse_model_dir = os.path.join(sparse_dir, str(best_key))
         logger.info(
             "SfM: %d registered images, %d 3-D points",
             reconstruction.num_reg_images(),
@@ -146,7 +148,7 @@ class Reconstructor:
         # ------------------------------------------------------------------
         if self.dense:
             points, colors = self._dense_reconstruct(
-                reconstruction, image_dir, output_dir, pycolmap
+                reconstruction, image_dir, output_dir, sparse_model_dir, pycolmap
             )
         else:
             points, colors = self._sparse_points(reconstruction)
@@ -182,6 +184,7 @@ class Reconstructor:
         reconstruction,
         image_dir: str,
         output_dir: str,
+        sparse_model_dir: str,
         pycolmap,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Run PatchMatch stereo and fusion; return dense point cloud.
@@ -191,8 +194,6 @@ class Reconstructor:
         """
         dense_dir = os.path.join(output_dir, "dense")
         os.makedirs(dense_dir, exist_ok=True)
-
-        sparse_model_dir = os.path.join(output_dir, "sparse")
 
         try:
             # Undistort images for dense MVS.

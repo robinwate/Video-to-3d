@@ -86,6 +86,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Embedded texture image format.",
     )
     p.add_argument(
+        "--no-background-removal",
+        action="store_true",
+        help="Skip background removal (useful if the video already has a clean background).",
+    )
+    p.add_argument(
+        "--fg-scale",
+        type=float,
+        default=0.6,
+        help="Fraction of frame used as foreground seed for GrabCut (0–1).",
+    )
+    p.add_argument(
         "--no-dense",
         action="store_true",
         help="Skip dense MVS reconstruction (faster, lower quality).",
@@ -136,6 +147,8 @@ def main(argv=None) -> int:
         max_frames=args.max_frames,
         blur_threshold=args.blur_threshold,
         similarity_threshold=args.similarity_threshold,
+        remove_background=not args.no_background_removal,
+        fg_scale=args.fg_scale,
         max_triangles=args.max_triangles,
         texture_size=args.texture_size,
         texture_format=args.texture_format,
