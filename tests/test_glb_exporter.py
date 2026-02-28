@@ -185,3 +185,52 @@ class TestGLBExporter:
         # Must parse successfully with the strict Python json parser.
         parsed = json.loads(json_text)
         assert "accessors" in parsed
+
+    def test_nan_positions_produce_unit_normals(self, tmp_path):
+        """GLB with NaN vertex positions must still have unit-length normals.
+
+        When positions are NaN the exporter clamps them to 0; the corresponding
+        normals must also be sanitized to unit-length vectors so the GLB passes
+        the ACCESSOR_VECTOR3_NON_UNIT validator.
+        """
+        import open3d as o3d
+
+        from pipeline.glb_exporter import GLBExporter
+
+        mesh = _make_minimal_mesh()
+        # Inject NaN into vertex positions so the matching normals become NaN.
+        verts = np.asarray(mesh.vertices).copy()
+        verts[0] = [float("nan"), float("nan"), float("nan")]
+        mesh.vertices = o3d.utility.Vector3dVector(verts)
+        # Recompute normals: they will be NaN/zero for degenerate triangles.
+        mesh.compute_vertex_normals()
+
+        texture = _make_texture()
+        out = str(tmp_path / "nan_pos.glb")
+        GLBExporter().export(mesh, texture, out)
+
+        # Read back the binary normal data and verify every normal has unit length.
+        with open(out, "rb") as fh:
+            raw = fh.read()
+
+        # GLB layout: 12-byte file header + 8-byte JSON chunk header = data at byte 20.
+        _GLB_JSON_DATA_OFFSET = 20
+        json_chunk_len = struct.unpack_from("<I", raw, 12)[0]
+        bin_offset = _GLB_JSON_DATA_OFFSET + json_chunk_len + 8  # skip JSON chunk + BIN chunk header
+
+        import json
+        json_text = raw[_GLB_JSON_DATA_OFFSET: _GLB_JSON_DATA_OFFSET + json_chunk_len].rstrip(b" ").decode("utf-8")
+        gltf = json.loads(json_text)
+
+        # NORMAL accessor is index 1 according to our exporter.
+        norm_accessor = gltf["accessors"][1]
+        norm_bv = gltf["bufferViews"][norm_accessor["bufferView"]]
+        bv_start = bin_offset + norm_bv["byteOffset"]
+        bv_end = bv_start + norm_bv["byteLength"]
+        norm_bytes = raw[bv_start:bv_end]
+        norm_arr = np.frombuffer(norm_bytes, dtype=np.float32).reshape(-1, 3)
+
+        lengths = np.linalg.norm(norm_arr, axis=1)
+        assert np.all(lengths > 0.99), (
+            f"Found zero-length or near-zero normals; min length={lengths.min():.6f}"
+        )

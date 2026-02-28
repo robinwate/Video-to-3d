@@ -119,3 +119,20 @@ class TestPointCloudBuilder:
         builder = PointCloudBuilder(min_confidence=0.1, voxel_size=None)
         with pytest.raises(RuntimeError):
             builder.build(frames, depths)
+
+    def test_build_filters_inf_depth_values(self, tmp_path):
+        """Depth pixels with Inf values must not produce NaN/Inf point coordinates."""
+        from pipeline.point_cloud_builder import PointCloudBuilder
+
+        # Frame with foreground everywhere.
+        frames = [_make_rgba_frame(tmp_path, 0, fg_alpha=200)]
+
+        # Depth map: mix of valid values and Inf.
+        depth = _make_depth_map(value=0.5)
+        depth[0, 0] = float("inf")  # inject a non-finite value
+        depths = [depth]
+
+        builder = PointCloudBuilder(min_confidence=0.1, voxel_size=None)
+        points, _ = builder.build(frames, depths)
+
+        assert np.isfinite(points).all(), "Point cloud must contain only finite coordinates"

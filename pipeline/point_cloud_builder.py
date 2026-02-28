@@ -74,9 +74,12 @@ class PointCloudBuilder:
 
             H, W = depth_map.shape
 
-            # Foreground mask: alpha > 0 AND depth above min confidence.
+            # Foreground mask: alpha > 0 AND depth above min confidence AND finite.
+            # np.isfinite guards against Inf values in the depth map (NaN is already
+            # excluded by the > comparison, but Inf passes it and would propagate
+            # to NaN/Inf point coordinates after the pinhole un-projection).
             alpha_mask = rgba[:, :, 3] > 0
-            depth_mask = depth_map > self.min_confidence
+            depth_mask = np.isfinite(depth_map) & (depth_map > self.min_confidence)
             mask = alpha_mask & depth_mask
 
             if not mask.any():
